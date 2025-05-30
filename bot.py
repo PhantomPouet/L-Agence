@@ -1,111 +1,94 @@
 import os
 import json
-import aiohttp
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from dotenv import load_dotenv
-from discord import app_commands
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
-TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-
 intents = discord.Intents.default()
+intents.presences = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-TWITCH_DATA_FILE = "twitch_links.json"
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
+ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
+
 NICKNAME_FILE = "nicknames.json"
 
-def load_data(file):
-    if os.path.exists(file):
-        with open(file, "r") as f:
+def load_nicknames():
+    if os.path.exists(NICKNAME_FILE):
+        with open(NICKNAME_FILE, "r") as f:
             return json.load(f)
     return {}
 
-def save_data(file, data):
-    with open(file, "w") as f:
+def save_nicknames(data):
+    with open(NICKNAME_FILE, "w") as f:
         json.dump(data, f)
+
+original_nicknames = load_nicknames()
 
 @bot.event
 async def on_ready():
-    await bot.wait_until_ready()
-    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-    print(f"{bot.user} connecté et commandes slash synchronisées.")
+    print(f"{bot.user} est connecté à Discord !")
 
-@bot.tree.command(name="register_twitch", description="Associe ton pseudo Twitch")
-@app_commands.describe(twitch_username="Ton pseudo Twitch (sans https)")
-async def register_twitch(interaction: discord.Interaction, twitch_username: str):
-    user_id = str(interaction.user.id)
-    data = load_data(TWITCH_DATA_FILE)
-    data[user_id] = {"twitch": twitch_username, "is_live": False}
-    save_data(TWITCH_DATA_FILE, data)
-    await interaction.response.send_message(f"✅ Ton Twitch `{twitch_username}` a été enregistré.", ephemeral=True)
+@bot.event
+async def on_presence_update(before, after):
+    guild = after.guild
+    if not guild:
+        return
 
-async def get_twitch_token():
-    url = "https://id.twitch.tv/oauth2/token"
-    params = {
-        "client_id": TWITCH_CLIENT_ID,
-        "client_secret": TWITCH_CLIENT_SECRET,
-        "grant_type": "client_credentials"
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, params=params) as resp:
-            data = await resp.json()
-            return data["access_token"]
-
-async def twitch_user_is_live(username, headers):
-    url = f"https://api.twitch.tv/helix/streams?user_login={username}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            data = await resp.json()
-            return len(data["data"]) > 0
-
-@tasks.loop(minutes=2)
-async def check_twitch_streams():
-    data = load_data(TWITCH_DATA_FILE)
-    nick_data = load_data(NICKNAME_FILE)
-    guild = bot.get_guild(GUILD_ID)
+    role_game = guild.get_role(ROLE_GAME_ID)
     role_stream = guild.get_role(ROLE_STREAM_ID)
-    token = await get_twitch_token()
-    headers = {"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
 
-    for user_id, info in data.items():
-        member = guild.get_member(int(user_id))
-        if not member:
-            continue
+    if not role_game or not role_stream:
+        print("Les rôles sont introuvables.")
+        return
 
-        is_live = await twitch_user_is_live(info["twitch"], headers)
-        was_live = info.get("is_live", False)
+    member = after
 
-        if is_live and not was_live:
-            if role_stream not in member.roles:
-                await member.add_roles(role_stream)
-            if str(member.id) not in nick_data:
-                nick_data[str(member.id)] = member.nick or ""
-                save_data(NICKNAME_FILE, nick_data)
+    is_streaming = any(a.type == discord.ActivityType.streaming for a in after.activities)
+    is_playing_star_citizen = any(
+        a.type == discord.ActivityType.playing and a.name == "Star Citizen"
+        for a in after.activities
+    )
+
+    if is_streaming:
+        if role_stream not in member.roles:
+            await member.add_roles(role_stream)
+        if not member.nick or not member.nick.startswith("🔴"):
             try:
-                await member.edit(nick=f"🔴 {member.nick or member.name}")
+                if str(member.id) not in original_nicknames:
+                    original_nicknames[str(member.id)] = member.nick or ""
+                    save_nicknames(original_nicknames)
+                base_nick = member.nick if member.nick else member.name
+                await member.edit(nick=f"🔴 {base_nick}")
             except discord.Forbidden:
-                print(f"❌ Pas de permission pour modifier le pseudo de {member}")
-            data[user_id]["is_live"] = True
-
-        elif not is_live and was_live:
-            if role_stream in member.roles:
-                await member.remove_roles(role_stream)
+                print(f"⚠️ Pas les permissions pour changer le pseudo de {member.display_name}")
+    else:
+        if role_stream in member.roles:
+            await member.remove_roles(role_stream)
+        if member.nick and member.nick.startswith("🔴"):
             try:
-                old_nick = nick_data.get(str(member.id), "")
-                await member.edit(nick=old_nick or None)
-                if str(member.id) in nick_data:
-                    del nick_data[str(member.id)]
-                    save_data(NICKNAME_FILE, nick_data)
+                user_id_str = str(member.id)
+                if user_id_str in original_nicknames:
+                    old_nick = original_nicknames[user_id_str]
+                    await member.edit(nick=old_nick or None)
+                    del original_nicknames[user_id_str]
+                    save_nicknames(original_nicknames)
+                else:
+                    await member.edit(nick=member.name)
             except discord.Forbidden:
-                print(f"❌ Pas de permission pour restaurer le pseudo de {member}")
-            data[user_id]["is_live"] = False
+                print(f"⚠️ Pas les permissions pour restaurer le pseudo de {member.display_name}")
 
-    save_data(TWITCH_DATA_FILE, data)
+    if is_playing_star_citizen:
+        if role_game not in member.roles:
+            await member.add_roles(role_game)
+    else:
+        if role_game in member.roles:
+            await member.remove_roles(role_game)
+
+bot.run(TOKEN)
