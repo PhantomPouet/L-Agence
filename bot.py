@@ -4,6 +4,7 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+from discord import app_commands
 
 load_dotenv()
 
@@ -33,16 +34,18 @@ def save_data(file, data):
 
 @bot.event
 async def on_ready():
-    print(f"{bot.user} connecté.")
-    check_twitch_streams.start()
+    await bot.wait_until_ready()
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    print(f"{bot.user} connecté et commandes slash synchronisées.")
 
-@bot.command()
-async def register_twitch(ctx, twitch_username):
+@bot.tree.command(name="register_twitch", description="Associe ton pseudo Twitch")
+@app_commands.describe(twitch_username="Ton pseudo Twitch (sans https)")
+async def register_twitch(interaction: discord.Interaction, twitch_username: str):
+    user_id = str(interaction.user.id)
     data = load_data(TWITCH_DATA_FILE)
-    user_id = str(ctx.author.id)
     data[user_id] = {"twitch": twitch_username, "is_live": False}
     save_data(TWITCH_DATA_FILE, data)
-    await ctx.send(f"✅ Ton compte Twitch `{twitch_username}` a été enregistré.")
+    await interaction.response.send_message(f"✅ Ton Twitch `{twitch_username}` a été enregistré.", ephemeral=True)
 
 async def get_twitch_token():
     url = "https://id.twitch.tv/oauth2/token"
