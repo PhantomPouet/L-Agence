@@ -2,6 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from discord import app_commands
 
 load_dotenv()
 
@@ -19,6 +20,30 @@ ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
 @bot.event
 async def on_ready():
     print(f"{bot.user} est connecté à Discord !")
+@bot.event
+async def on_ready():
+    await bot.wait_until_ready()
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    print(f"{bot.user} connecté et commandes slash synchronisées.")
+
+@bot.tree.command(name="register_twitch", description="Associe ton pseudo Twitch")
+@app_commands.describe(twitch_username="Ton pseudo Twitch (sans https)")
+async def register_twitch(interaction: discord.Interaction, twitch_username: str):
+    user_id = str(interaction.user.id)
+    data = load_data(TWITCH_DATA_FILE)
+    data[user_id] = {"twitch": twitch_username, "is_live": False}
+    save_data(TWITCH_DATA_FILE, data)
+    await interaction.response.send_message(f"✅ Ton Twitch `{twitch_username}` a été enregistré.", ephemeral=True)    
+@bot.command()
+async def register_twitch(ctx, twitch_username):
+    user_id = str(ctx.author.id)
+    data = load_twitch_links()
+    data[user_id] = {
+        "twitch": twitch_username,
+        "is_live": False
+    }
+    save_twitch_links(data)
+    await ctx.send(f"Ton compte Twitch `{twitch_username}` a été enregistré ✅")
 
 @bot.event
 async def on_presence_update(before, after):
@@ -41,7 +66,32 @@ async def on_presence_update(before, after):
         a.type == discord.ActivityType.playing and a.name == "Star Citizen"
         for a in after.activities
     )
+    
+@tasks.loop(minutes=2)
+async def check_twitch_streams():
+    data = load_twitch_links()
+    token = get_twitch_token()
+    headers = {"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
+    
+    for user_id, info in data.items():
+        twitch_name = info["twitch"]
+        discord_user = bot.get_user(int(user_id))
+        if not discord_user:
+            continue
 
+        is_live = twitch_user_is_live(twitch_name, headers)
+        if is_live and not info.get("is_live", False):
+            # Passé en live
+            data[user_id]["is_live"] = True
+            await apply_stream_changes(discord_user)
+        elif not is_live and info.get("is_live", False):
+            # Fin de stream
+            data[user_id]["is_live"] = False
+            await revert_stream_changes(discord_user)
+    
+    save_twitch_links(data)
+
+    
     # === GESTION STREAMING ===
     if is_streaming:
         if role_stream not in member.roles:
