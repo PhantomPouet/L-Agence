@@ -49,6 +49,8 @@ def save_nicks():
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user}")
+    # Changer le statut en "/link"
+    await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
         print(f"Commandes synchronisées : {[cmd.name for cmd in synced]}")
