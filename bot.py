@@ -16,9 +16,6 @@ GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 
-print(f"TWITCH_CLIENT_ID: {TWITCH_CLIENT_ID}")
-print(f"TWITCH_SECRET: {TWITCH_SECRET}")
-
 STREAM_ROLE_NAME = "En stream"
 GAME_ROLE_NAME = "En train de jouer"
 TARGET_GAME = "Star Citizen"
@@ -148,6 +145,7 @@ async def get_twitch_token():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, params=params) as resp:
             data = await resp.json()
+            print(f"Réponse de l'obtention du token Twitch: {data}") # Ajout de cette ligne
             return data["access_token"]
 
 async def is_streaming_on_twitch(username):
