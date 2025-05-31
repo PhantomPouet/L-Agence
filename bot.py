@@ -1,86 +1,145 @@
-
-import os
-import json
-import aiohttp
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from dotenv import load_dotenv
-
-load_dotenv()
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
-ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
-TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+import os
+import json
+import aiohttp
 
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
+intents.guilds = True
+intents.message_content = False
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
+TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
+TWITCH_SECRET = os.getenv("TWITCH_SECRET")
+
+STREAM_ROLE_NAME = "En stream"
+GAME_ROLE_NAME = "En train de jouer"
+TARGET_GAME = "Star Citizen"
+
+LINKS_FILE = "twitch_links.json"
+NICKS_FILE = "nicknames.json"
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
 
-TWITCH_DATA_FILE = "twitch_links.json"
-NICKNAME_FILE = "nicknames.json"
+# Charger les liens twitch et pseudos d’origine
+if os.path.exists(LINKS_FILE):
+    with open(LINKS_FILE, "r") as f:
+        twitch_links = json.load(f)
+else:
+    twitch_links = {}
 
-def load_data(file):
-    if os.path.exists(file):
-        with open(file, "r") as f:
-            return json.load(f)
-    return {}
+if os.path.exists(NICKS_FILE):
+    with open(NICKS_FILE, "r") as f:
+        original_nicks = json.load(f)
+else:
+    original_nicks = {}
 
-def save_data(file, data):
-    with open(file, "w") as f:
-        json.dump(data, f)
+def save_links():
+    with open(LINKS_FILE, "w") as f:
+        json.dump(twitch_links, f)
+
+def save_nicks():
+    with open(NICKS_FILE, "w") as f:
+        json.dump(original_nicks, f)
 
 @bot.event
 async def on_ready():
-    await bot.wait_until_ready()
-    await tree.sync(guild=discord.Object(id=GUILD_ID))
-    print(f"{bot.user} connecté et commandes slash synchronisées.")
-    check_twitch_streams.start()
+    print(f"Connecté en tant que {bot.user}")
+    try:
+        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"Commandes synchronisées : {[cmd.name for cmd in synced]}")
+    except Exception as e:
+        print(f"Erreur de synchronisation : {e}")
+    check_streams.start()
 
-@tree.command(name="link", description="Associe ton pseudo Twitch")
-@app_commands.describe(twitch_username="Ton pseudo Twitch (sans https)")
-async def link(interaction: discord.Interaction, twitch_username: str):
-    user_id = str(interaction.user.id)
-    data = load_data(TWITCH_DATA_FILE)
-    data[user_id] = {"twitch": twitch_username, "is_live": False}
-    save_data(TWITCH_DATA_FILE, data)
-    await interaction.response.send_message(f"✅ Ton Twitch `{twitch_username}` a été enregistré.", ephemeral=True)
+@bot.event
+async def on_presence_update(before, after):
+    if not after.guild:
+        return
 
-@tree.command(name="unlink", description="Supprime l'association avec ton compte Twitch")
+    guild = after.guild
+    member = guild.get_member(after.id)
+
+    if not member:
+        return
+
+    stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
+    game_role = discord.utils.get(guild.roles, name=GAME_ROLE_NAME)
+
+    is_streaming = any(
+        activity.type == discord.ActivityType.streaming for activity in after.activities
+    )
+
+    playing_star_citizen = any(
+        activity.type == discord.ActivityType.playing and TARGET_GAME.lower() in activity.name.lower()
+        for activity in after.activities
+    )
+
+    if stream_role:
+        if is_streaming:
+            await member.add_roles(stream_role)
+            if str(member.id) not in original_nicks:
+                original_nicks[str(member.id)] = member.display_name
+                save_nicks()
+            try:
+                await member.edit(nick=f"🔴 {member.display_name}")
+            except discord.Forbidden:
+                pass
+        else:
+            await member.remove_roles(stream_role)
+            if str(member.id) in original_nicks:
+                try:
+                    await member.edit(nick=original_nicks[str(member.id)])
+                except discord.Forbidden:
+                    pass
+                del original_nicks[str(member.id)]
+                save_nicks()
+
+    if game_role:
+        if playing_star_citizen:
+            await member.add_roles(game_role)
+        else:
+            await member.remove_roles(game_role)
+
+@bot.tree.command(name="link", description="Lier ton pseudo Twitch à ton compte Discord", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(twitch="Ton pseudo Twitch")
+async def link(interaction: discord.Interaction, twitch: str):
+    twitch_links[str(interaction.user.id)] = twitch
+    save_links()
+    live = await is_streaming_on_twitch(twitch)
+    await interaction.response.send_message(
+        f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+    )
+
+@bot.tree.command(name="unlink", description="Supprimer le lien avec ton compte Twitch", guild=discord.Object(id=GUILD_ID))
 async def unlink(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    data = load_data(TWITCH_DATA_FILE)
-    if user_id in data:
-        del data[user_id]
-        save_data(TWITCH_DATA_FILE, data)
-        await interaction.response.send_message("❌ Ton compte Twitch a été dissocié.", ephemeral=True)
+    if str(interaction.user.id) in twitch_links:
+        del twitch_links[str(interaction.user.id)]
+        save_links()
+        await interaction.response.send_message("Lien supprimé.", ephemeral=True)
     else:
-        await interaction.response.send_message("ℹ️ Aucun compte Twitch enregistré.", ephemeral=True)
+        await interaction.response.send_message("Aucun lien trouvé.", ephemeral=True)
 
-@tree.command(name="twitch_status", description="Affiche l'état du lien Twitch")
-async def twitch_status(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    data = load_data(TWITCH_DATA_FILE)
-    if user_id in data:
-        twitch = data[user_id]["twitch"]
-        live = "🔴 En live" if data[user_id].get("is_live") else "⚫ Hors ligne"
-await interaction.response.send_message(f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True)
-
-Statut : {live}", ephemeral=True)
+@bot.tree.command(name="statut", description="Afficher le statut du lien Twitch", guild=discord.Object(id=GUILD_ID))
+async def statut(interaction: discord.Interaction):
+    twitch = twitch_links.get(str(interaction.user.id))
+    if not twitch:
+        await interaction.response.send_message("Aucun pseudo Twitch lié.", ephemeral=True)
     else:
-        await interaction.response.send_message("🚫 Aucun compte Twitch lié.", ephemeral=True)
+        live = await is_streaming_on_twitch(twitch)
+        await interaction.response.send_message(
+            f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+        )
 
 async def get_twitch_token():
     url = "https://id.twitch.tv/oauth2/token"
     params = {
         "client_id": TWITCH_CLIENT_ID,
-        "client_secret": TWITCH_CLIENT_SECRET,
+        "client_secret": TWITCH_SECRET,
         "grant_type": "client_credentials"
     }
     async with aiohttp.ClientSession() as session:
@@ -88,74 +147,53 @@ async def get_twitch_token():
             data = await resp.json()
             return data["access_token"]
 
-async def twitch_user_is_live(username, headers):
-    url = f"https://api.twitch.tv/helix/streams?user_login={username}"
+async def is_streaming_on_twitch(username):
+    token = await get_twitch_token()
+    headers = {
+        "Client-ID": TWITCH_CLIENT_ID,
+        "Authorization": f"Bearer {token}"
+    }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
+        async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
             data = await resp.json()
-            return len(data["data"]) > 0
+            if data["data"]:
+                return "🔴 En live"
+            else:
+                return "⚫ Hors ligne"
 
 @tasks.loop(minutes=2)
-async def check_twitch_streams():
-    data = load_data(TWITCH_DATA_FILE)
-    nick_data = load_data(NICKNAME_FILE)
+async def check_streams():
     guild = bot.get_guild(GUILD_ID)
-    role_stream = guild.get_role(ROLE_STREAM_ID)
-    token = await get_twitch_token()
-    headers = {"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
+    if not guild:
+        return
 
-    for user_id, info in data.items():
-        member = guild.get_member(int(user_id))
+    for discord_id, twitch_name in twitch_links.items():
+        member = guild.get_member(int(discord_id))
         if not member:
             continue
 
-        is_live = await twitch_user_is_live(info["twitch"], headers)
-        was_live = info.get("is_live", False)
+        live_status = await is_streaming_on_twitch(twitch_name)
+        stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
 
-        if is_live and not was_live:
-            if role_stream not in member.roles:
-                await member.add_roles(role_stream)
-            if str(member.id) not in nick_data:
-                nick_data[str(member.id)] = member.nick or ""
-                save_data(NICKNAME_FILE, nick_data)
+        if live_status == "🔴 En live":
+            if stream_role and stream_role not in member.roles:
+                await member.add_roles(stream_role)
+            if str(member.id) not in original_nicks:
+                original_nicks[str(member.id)] = member.display_name
+                save_nicks()
             try:
-                await member.edit(nick=f"🔴 {member.nick or member.name}")
+                await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
             except discord.Forbidden:
-                print(f"❌ Pas de permission pour modifier le pseudo de {member}")
-            data[user_id]["is_live"] = True
+                pass
+        else:
+            if stream_role and stream_role in member.roles:
+                await member.remove_roles(stream_role)
+            if str(member.id) in original_nicks:
+                try:
+                    await member.edit(nick=original_nicks[str(member.id)])
+                except discord.Forbidden:
+                    pass
+                del original_nicks[str(member.id)]
+                save_nicks()
 
-        elif not is_live and was_live:
-            if role_stream in member.roles:
-                await member.remove_roles(role_stream)
-            try:
-                old_nick = nick_data.get(str(member.id), "")
-                await member.edit(nick=old_nick or None)
-                if str(member.id) in nick_data:
-                    del nick_data[str(member.id)]
-                    save_data(NICKNAME_FILE, nick_data)
-            except discord.Forbidden:
-                print(f"❌ Pas de permission pour restaurer le pseudo de {member}")
-            data[user_id]["is_live"] = False
-
-    save_data(TWITCH_DATA_FILE, data)
-
-@bot.event
-async def on_presence_update(before, after):
-    guild = bot.get_guild(GUILD_ID)
-    role_game = guild.get_role(ROLE_GAME_ID)
-    member = guild.get_member(after.id)
-
-    if member is None:
-        return
-
-    is_playing_star_citizen = any(
-        activity.type == discord.ActivityType.playing and activity.name.lower() == "star citizen"
-        for activity in after.activities
-    )
-
-    if is_playing_star_citizen:
-        if role_game not in member.roles:
-            await member.add_roles(role_game)
-    else:
-        if role_game in member.roles:
-            await member.remove_roles(role_game)
+bot.run(TOKEN)
