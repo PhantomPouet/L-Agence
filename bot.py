@@ -70,7 +70,8 @@ async def twitch_status(interaction: discord.Interaction):
     if user_id in data:
         twitch = data[user_id]["twitch"]
         live = "🔴 En live" if data[user_id].get("is_live") else "⚫ Hors ligne"
-await interaction.response.send_message(f"Twitch lié : `{twitch}`\\nStatut : {live}", ephemeral=True)
+await interaction.response.send_message(f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True)
+
 Statut : {live}", ephemeral=True)
     else:
         await interaction.response.send_message("🚫 Aucun compte Twitch lié.", ephemeral=True)
