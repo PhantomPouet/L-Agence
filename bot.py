@@ -1,3 +1,4 @@
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -25,7 +26,6 @@ NICKS_FILE = "nicknames.json"
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Charger les liens twitch et pseudos d’origine
 if os.path.exists(LINKS_FILE):
     with open(LINKS_FILE, "r") as f:
         twitch_links = json.load(f)
@@ -49,7 +49,6 @@ def save_nicks():
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user}")
-    # Changer le statut en "/link"
     await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
@@ -113,8 +112,9 @@ async def link(interaction: discord.Interaction, twitch: str):
     twitch_links[str(interaction.user.id)] = twitch
     save_links()
     live = await is_streaming_on_twitch(twitch)
+    status = "🔴 En live" if live else "⚫ Hors ligne"
     await interaction.response.send_message(
-        f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+        f"Twitch lié : `{twitch}`\nStatut : {status}", ephemeral=True
     )
 
 @bot.tree.command(name="unlink", description="Supprimer le lien avec ton compte Twitch", guild=discord.Object(id=GUILD_ID))
@@ -133,8 +133,9 @@ async def statut(interaction: discord.Interaction):
         await interaction.response.send_message("Aucun pseudo Twitch lié.", ephemeral=True)
     else:
         live = await is_streaming_on_twitch(twitch)
+        status = "🔴 En live" if live else "⚫ Hors ligne"
         await interaction.response.send_message(
-            f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+            f"Twitch lié : `{twitch}`\nStatut : {status}", ephemeral=True
         )
 
 async def get_twitch_token():
@@ -147,7 +148,6 @@ async def get_twitch_token():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, params=params) as resp:
             data = await resp.json()
-            print(f"Réponse de l'obtention du token Twitch: {data}") # Ajout de cette ligne
             return data["access_token"]
 
 async def is_streaming_on_twitch(username):
@@ -159,10 +159,7 @@ async def is_streaming_on_twitch(username):
     async with aiohttp.ClientSession() as session:
         async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
             data = await resp.json()
-            if data["data"]:
-                return "🔴 En live"
-            else:
-                return "⚫ Hors ligne"
+            return bool(data["data"])
 
 @tasks.loop(minutes=2)
 async def check_streams():
@@ -175,10 +172,10 @@ async def check_streams():
         if not member:
             continue
 
-        live_status = await is_streaming_on_twitch(twitch_name)
+        is_live = await is_streaming_on_twitch(twitch_name)
         stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
 
-        if live_status == "🔴 En live":
+        if is_live:
             if stream_role and stream_role not in member.roles:
                 await member.add_roles(stream_role)
             if str(member.id) not in original_nicks:
