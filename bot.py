@@ -159,7 +159,10 @@ async def is_streaming_on_twitch(username):
     async with aiohttp.ClientSession() as session:
         async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
             data = await resp.json()
-            if data["data"]:
+            print(f"[DEBUG] Réponse Twitch pour {username}: {data}")
+            
+            # Sécurité : s'assurer que la clé 'data' existe et est une liste non vide
+            if "data" in data and isinstance(data["data"], list) and data["data"]:
                 return "🔴 En live"
             else:
                 return "⚫ Hors ligne"
