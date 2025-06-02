@@ -20,8 +20,9 @@ STREAM_ROLE_NAME = "En stream"
 GAME_ROLE_NAME = "En train de jouer"
 TARGET_GAME = "Star Citizen"
 
-LINKS_FILE = "twitch_links.json"
-NICKS_FILE = "nicknames.json"
+DATA_PATH = "/app/data"
+LINKS_FILE = os.path.join(DATA_PATH, "twitch_links.json")
+NICKS_FILE = os.path.join(DATA_PATH, "nicknames.json")
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
