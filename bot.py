@@ -16,8 +16,8 @@ GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 
-STREAM_ROLE_NAME = "En stream"
-GAME_ROLE_NAME = "En train de jouer"
+ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
+ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
 TARGET_GAME = "Star Citizen"
 
 DATA_PATH = "/app/data"
@@ -26,7 +26,6 @@ NICKS_FILE = os.path.join(DATA_PATH, "nicknames.json")
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Charger les liens twitch et pseudos d’origine
 if os.path.exists(LINKS_FILE):
     with open(LINKS_FILE, "r") as f:
         twitch_links = json.load(f)
@@ -65,12 +64,11 @@ async def on_presence_update(before, after):
 
     guild = after.guild
     member = guild.get_member(after.id)
-
     if not member:
         return
 
-    stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
-    game_role = discord.utils.get(guild.roles, name=GAME_ROLE_NAME)
+    stream_role = guild.get_role(ROLE_STREAM_ID)
+    game_role = guild.get_role(ROLE_GAME_ID)
 
     is_streaming = any(
         activity.type == discord.ActivityType.streaming for activity in after.activities
@@ -173,15 +171,13 @@ async def check_streams():
     if not guild:
         return
 
-    stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
-    game_role = discord.utils.get(guild.roles, name=GAME_ROLE_NAME)
-
     for discord_id, twitch_name in twitch_links.items():
         member = guild.get_member(int(discord_id))
         if not member:
             continue
 
         live_status = await is_streaming_on_twitch(twitch_name)
+        stream_role = guild.get_role(ROLE_STREAM_ID)
 
         if live_status == "🔴 En live":
             if stream_role and stream_role not in member.roles:
@@ -203,19 +199,5 @@ async def check_streams():
                     pass
                 del original_nicks[str(member.id)]
                 save_nicks()
-
-        # Détection du jeu Star Citizen
-        playing_star_citizen = any(
-            activity.type == discord.ActivityType.playing and
-            activity.name and
-            TARGET_GAME.lower() in activity.name.lower()
-            for activity in member.activities
-        )
-
-        if game_role:
-            if playing_star_citizen and game_role not in member.roles:
-                await member.add_roles(game_role)
-            elif not playing_star_citizen and game_role in member.roles:
-                await member.remove_roles(game_role)
 
 bot.run(TOKEN)
