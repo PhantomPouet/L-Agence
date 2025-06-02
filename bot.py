@@ -78,9 +78,12 @@ async def on_presence_update(before, after):
     )
 
     playing_star_citizen = any(
-        activity.type == discord.ActivityType.playing and TARGET_GAME.lower() in activity.name.lower()
-        for activity in after.activities
-    )
+    activity.type == discord.ActivityType.playing and
+    activity.name and
+    TARGET_GAME.lower() in activity.name.lower()
+    for activity in after.activities
+)
+print(f"[DEBUG] {member.display_name} joue à Star Citizen ? {playing_star_citizen}")
 
     if stream_role:
         if is_streaming:
