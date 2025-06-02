@@ -78,12 +78,11 @@ async def on_presence_update(before, after):
     )
 
     playing_star_citizen = any(
-    activity.type == discord.ActivityType.playing and
-    activity.name and
-    TARGET_GAME.lower() in activity.name.lower()
-    for activity in after.activities
-)
-print(f"[DEBUG] {member.display_name} joue à Star Citizen ? {playing_star_citizen}")
+        activity.type == discord.ActivityType.playing and
+        activity.name and
+        TARGET_GAME.lower() in activity.name.lower()
+        for activity in after.activities
+    )
 
     if stream_role:
         if is_streaming:
@@ -110,6 +109,7 @@ print(f"[DEBUG] {member.display_name} joue à Star Citizen ? {playing_star_citiz
             await member.add_roles(game_role)
         else:
             await member.remove_roles(game_role)
+
 
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch à ton compte Discord", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
