@@ -50,7 +50,6 @@ def save_nicks():
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user}")
-    # Changer le statut en "/link"
     await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
@@ -110,7 +109,6 @@ async def on_presence_update(before, after):
         else:
             await member.remove_roles(game_role)
 
-
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch à ton compte Discord", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
 async def link(interaction: discord.Interaction, twitch: str):
@@ -151,7 +149,7 @@ async def get_twitch_token():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, params=params) as resp:
             data = await resp.json()
-            print(f"Réponse de l'obtention du token Twitch: {data}") # Ajout de cette ligne
+            print(f"Réponse de l'obtention du token Twitch: {data}")
             return data["access_token"]
 
 async def is_streaming_on_twitch(username):
@@ -164,8 +162,6 @@ async def is_streaming_on_twitch(username):
         async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
             data = await resp.json()
             print(f"[DEBUG] Réponse Twitch pour {username}: {data}")
-            
-            # Sécurité : s'assurer que la clé 'data' existe et est une liste non vide
             if "data" in data and isinstance(data["data"], list) and data["data"]:
                 return "🔴 En live"
             else:
@@ -177,13 +173,15 @@ async def check_streams():
     if not guild:
         return
 
+    stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
+    game_role = discord.utils.get(guild.roles, name=GAME_ROLE_NAME)
+
     for discord_id, twitch_name in twitch_links.items():
         member = guild.get_member(int(discord_id))
         if not member:
             continue
 
         live_status = await is_streaming_on_twitch(twitch_name)
-        stream_role = discord.utils.get(guild.roles, name=STREAM_ROLE_NAME)
 
         if live_status == "🔴 En live":
             if stream_role and stream_role not in member.roles:
@@ -205,5 +203,19 @@ async def check_streams():
                     pass
                 del original_nicks[str(member.id)]
                 save_nicks()
+
+        # Détection du jeu Star Citizen
+        playing_star_citizen = any(
+            activity.type == discord.ActivityType.playing and
+            activity.name and
+            TARGET_GAME.lower() in activity.name.lower()
+            for activity in member.activities
+        )
+
+        if game_role:
+            if playing_star_citizen and game_role not in member.roles:
+                await member.add_roles(game_role)
+            elif not playing_star_citizen and game_role in member.roles:
+                await member.remove_roles(game_role)
 
 bot.run(TOKEN)
