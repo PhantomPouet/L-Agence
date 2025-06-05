@@ -85,12 +85,14 @@ async def on_presence_update(before, after):
         if is_streaming:
             await member.add_roles(stream_role)
             if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = member.display_name
+                clean_nick = member.display_name.lstrip("🔴 ").strip()
+                original_nicks[str(member.id)] = clean_nick
                 save_nicks()
-            try:
-                await member.edit(nick=f"🔴 {member.display_name}")
-            except discord.Forbidden:
-                pass
+            if not member.display_name.startswith("🔴"):
+                try:
+                    await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
+                except discord.Forbidden:
+                    pass
         else:
             await member.remove_roles(stream_role)
             if str(member.id) in original_nicks:
@@ -183,12 +185,14 @@ async def check_streams():
             if stream_role and stream_role not in member.roles:
                 await member.add_roles(stream_role)
             if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = member.display_name
+                clean_nick = member.display_name.lstrip("🔴 ").strip()
+                original_nicks[str(member.id)] = clean_nick
                 save_nicks()
-            try:
-                await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
-            except discord.Forbidden:
-                pass
+            if not member.display_name.startswith("🔴"):
+                try:
+                    await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
+                except discord.Forbidden:
+                    pass
         else:
             if stream_role and stream_role in member.roles:
                 await member.remove_roles(stream_role)
