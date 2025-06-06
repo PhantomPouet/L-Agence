@@ -46,6 +46,9 @@ def save_nicks():
     with open(NICKS_FILE, "w") as f:
         json.dump(original_nicks, f)
 
+def clean_nick(nick):
+    return nick.lstrip("🔴 ").strip()
+
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user}")
@@ -85,12 +88,12 @@ async def on_presence_update(before, after):
         if is_streaming:
             await member.add_roles(stream_role)
             if str(member.id) not in original_nicks:
-                clean_nick = member.display_name.lstrip("🔴 ").strip()
-                original_nicks[str(member.id)] = clean_nick
+                original_nicks[str(member.id)] = clean_nick(member.display_name)
                 save_nicks()
-            if not member.display_name.startswith("🔴"):
+            new_nick = f"🔴 {clean_nick(member.display_name)}"
+            if member.display_name != new_nick:
                 try:
-                    await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
+                    await member.edit(nick=new_nick)
                 except discord.Forbidden:
                     pass
         else:
@@ -185,12 +188,12 @@ async def check_streams():
             if stream_role and stream_role not in member.roles:
                 await member.add_roles(stream_role)
             if str(member.id) not in original_nicks:
-                clean_nick = member.display_name.lstrip("🔴 ").strip()
-                original_nicks[str(member.id)] = clean_nick
+                original_nicks[str(member.id)] = clean_nick(member.display_name)
                 save_nicks()
-            if not member.display_name.startswith("🔴"):
+            new_nick = f"🔴 {clean_nick(member.display_name)}"
+            if member.display_name != new_nick:
                 try:
-                    await member.edit(nick=f"🔴 {original_nicks[str(member.id)]}")
+                    await member.edit(nick=new_nick)
                 except discord.Forbidden:
                     pass
         else:
