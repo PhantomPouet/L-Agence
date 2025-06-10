@@ -19,7 +19,6 @@ TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
 ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
 TARGET_GAME = "Star Citizen"
-EXCLUDED_ROLE_IDS = [1363632614556041417]  # Rôles exclus des changements
 
 DATA_PATH = "/app/data"
 LINKS_FILE = os.path.join(DATA_PATH, "twitch_links.json")
@@ -47,8 +46,8 @@ def save_nicks():
     with open(NICKS_FILE, "w") as f:
         json.dump(original_nicks, f)
 
-def is_excluded(member):
-    return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
+def clean_nick(nick):
+    return nick.lstrip("🔴 ").strip()
 
 @bot.event
 async def on_ready():
@@ -68,7 +67,7 @@ async def on_presence_update(before, after):
 
     guild = after.guild
     member = guild.get_member(after.id)
-    if not member or is_excluded(member):
+    if not member:
         return
 
     stream_role = guild.get_role(ROLE_STREAM_ID)
@@ -88,15 +87,15 @@ async def on_presence_update(before, after):
     if stream_role:
         if is_streaming:
             await member.add_roles(stream_role)
-            base_name = original_nicks.get(str(member.id), member.display_name)
             if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = member.display_name
+                original_nicks[str(member.id)] = clean_nick(member.display_name)
                 save_nicks()
-            try:
-                if not member.display_name.startswith("🔴"):
-                    await member.edit(nick=f"🔴 {base_name}")
-            except discord.Forbidden:
-                pass
+            new_nick = f"🔴 {clean_nick(member.display_name)}"
+            if member.display_name != new_nick:
+                try:
+                    await member.edit(nick=new_nick)
+                except discord.Forbidden:
+                    pass
         else:
             await member.remove_roles(stream_role)
             if str(member.id) in original_nicks:
@@ -177,27 +176,26 @@ async def check_streams():
     if not guild:
         return
 
-    stream_role = guild.get_role(ROLE_STREAM_ID)
-
     for discord_id, twitch_name in twitch_links.items():
         member = guild.get_member(int(discord_id))
-        if not member or is_excluded(member):
+        if not member:
             continue
 
         live_status = await is_streaming_on_twitch(twitch_name)
+        stream_role = guild.get_role(ROLE_STREAM_ID)
 
         if live_status == "🔴 En live":
             if stream_role and stream_role not in member.roles:
                 await member.add_roles(stream_role)
-            base_name = original_nicks.get(str(member.id), member.display_name)
             if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = member.display_name
+                original_nicks[str(member.id)] = clean_nick(member.display_name)
                 save_nicks()
-            try:
-                if not member.display_name.startswith("🔴"):
-                    await member.edit(nick=f"🔴 {base_name}")
-            except discord.Forbidden:
-                pass
+            new_nick = f"🔴 {clean_nick(member.display_name)}"
+            if member.display_name != new_nick:
+                try:
+                    await member.edit(nick=new_nick)
+                except discord.Forbidden:
+                    pass
         else:
             if stream_role and stream_role in member.roles:
                 await member.remove_roles(stream_role)
