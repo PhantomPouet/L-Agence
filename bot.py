@@ -159,7 +159,7 @@ async def check_streams():
 
         live_status, game = await is_streaming_on_twitch(twitch_name)
 
-        if live_status == "🔴 En live" and game == TARGET_GAME:
+        if live_status == "🔴 En live" and TARGET_GAME in game:
             if not is_excluded(member):
                 if stream_role and stream_role not in member.roles:
                     await member.add_roles(stream_role)
