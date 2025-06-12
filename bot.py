@@ -18,7 +18,8 @@ TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 
 ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
 ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
-TARGET_GAME = "Star Citizen"
+TARGET_GAME = "star citizen"
+EXCLUDED_ROLE_IDS = [1363632614556041417]  # Rôles exclus pour le stream uniquement
 
 DATA_PATH = "/app/data"
 LINKS_FILE = os.path.join(DATA_PATH, "twitch_links.json")
@@ -46,8 +47,8 @@ def save_nicks():
     with open(NICKS_FILE, "w") as f:
         json.dump(original_nicks, f)
 
-def clean_nick(nick):
-    return nick.lstrip("🔴 ").strip()
+def is_excluded(member):
+    return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
 
 @bot.event
 async def on_ready():
@@ -70,41 +71,14 @@ async def on_presence_update(before, after):
     if not member:
         return
 
-    stream_role = guild.get_role(ROLE_STREAM_ID)
     game_role = guild.get_role(ROLE_GAME_ID)
-
-    is_streaming = any(
-        activity.type == discord.ActivityType.streaming for activity in after.activities
-    )
 
     playing_star_citizen = any(
         activity.type == discord.ActivityType.playing and
         activity.name and
-        TARGET_GAME.lower() in activity.name.lower()
+        TARGET_GAME in activity.name.lower()
         for activity in after.activities
     )
-
-    if stream_role:
-        if is_streaming:
-            await member.add_roles(stream_role)
-            if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = clean_nick(member.display_name)
-                save_nicks()
-            new_nick = f"🔴 {clean_nick(member.display_name)}"
-            if member.display_name != new_nick:
-                try:
-                    await member.edit(nick=new_nick)
-                except discord.Forbidden:
-                    pass
-        else:
-            await member.remove_roles(stream_role)
-            if str(member.id) in original_nicks:
-                try:
-                    await member.edit(nick=original_nicks[str(member.id)])
-                except discord.Forbidden:
-                    pass
-                del original_nicks[str(member.id)]
-                save_nicks()
 
     if game_role:
         if playing_star_citizen:
@@ -117,9 +91,9 @@ async def on_presence_update(before, after):
 async def link(interaction: discord.Interaction, twitch: str):
     twitch_links[str(interaction.user.id)] = twitch
     save_links()
-    live = await is_streaming_on_twitch(twitch)
+    live, game = await is_streaming_on_twitch(twitch)
     await interaction.response.send_message(
-        f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+        f"Twitch lié : `{twitch}`\nStatut : {live} ({game})", ephemeral=True
     )
 
 @bot.tree.command(name="unlink", description="Supprimer le lien avec ton compte Twitch", guild=discord.Object(id=GUILD_ID))
@@ -137,9 +111,9 @@ async def statut(interaction: discord.Interaction):
     if not twitch:
         await interaction.response.send_message("Aucun pseudo Twitch lié.", ephemeral=True)
     else:
-        live = await is_streaming_on_twitch(twitch)
+        live, game = await is_streaming_on_twitch(twitch)
         await interaction.response.send_message(
-            f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
+            f"Twitch lié : `{twitch}`\nStatut : {live} ({game})", ephemeral=True
         )
 
 async def get_twitch_token():
@@ -152,7 +126,6 @@ async def get_twitch_token():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, params=params) as resp:
             data = await resp.json()
-            print(f"Réponse de l'obtention du token Twitch: {data}")
             return data["access_token"]
 
 async def is_streaming_on_twitch(username):
@@ -166,9 +139,10 @@ async def is_streaming_on_twitch(username):
             data = await resp.json()
             print(f"[DEBUG] Réponse Twitch pour {username}: {data}")
             if "data" in data and isinstance(data["data"], list) and data["data"]:
-                return "🔴 En live"
+                game_name = data["data"][0].get("game_name", "")
+                return ("🔴 En live", game_name.lower())
             else:
-                return "⚫ Hors ligne"
+                return ("⚫ Hors ligne", None)
 
 @tasks.loop(minutes=2)
 async def check_streams():
@@ -176,24 +150,26 @@ async def check_streams():
     if not guild:
         return
 
+    stream_role = guild.get_role(ROLE_STREAM_ID)
+
     for discord_id, twitch_name in twitch_links.items():
         member = guild.get_member(int(discord_id))
         if not member:
             continue
 
-        live_status = await is_streaming_on_twitch(twitch_name)
-        stream_role = guild.get_role(ROLE_STREAM_ID)
+        live_status, game = await is_streaming_on_twitch(twitch_name)
 
-        if live_status == "🔴 En live":
-            if stream_role and stream_role not in member.roles:
-                await member.add_roles(stream_role)
-            if str(member.id) not in original_nicks:
-                original_nicks[str(member.id)] = clean_nick(member.display_name)
-                save_nicks()
-            new_nick = f"🔴 {clean_nick(member.display_name)}"
-            if member.display_name != new_nick:
+        if live_status == "🔴 En live" and game == TARGET_GAME:
+            if not is_excluded(member):
+                if stream_role and stream_role not in member.roles:
+                    await member.add_roles(stream_role)
+                base_name = original_nicks.get(str(member.id), member.display_name)
+                if str(member.id) not in original_nicks:
+                    original_nicks[str(member.id)] = member.display_name
+                    save_nicks()
                 try:
-                    await member.edit(nick=new_nick)
+                    if not member.display_name.startswith("🔴"):
+                        await member.edit(nick=f"🔴 {base_name}")
                 except discord.Forbidden:
                     pass
         else:
