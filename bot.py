@@ -22,7 +22,9 @@ TARGET_GAME = "Star Citizen"
 EXCLUDED_ROLE_IDS = [1363632614556041417]  # Exclusion
 
 # Init Firebase
-cred = credentials.Certificate("firebase_key.json")
+import json
+firebase_key = json.loads(os.getenv("FIREBASE_KEY_JSON"))
+cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
