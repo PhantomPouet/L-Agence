@@ -7,6 +7,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 import sys # Import pour exit(1)
+import base64 # NOUVEL IMPORT NÉCESSAIRE pour le décodage Base64
 
 print("[DEBUG] Démarrage du script bot.py")
 
@@ -53,19 +54,22 @@ except (TypeError, ValueError):
     print("[CRITICAL ERROR] ROLE_GAME_ID n'est pas défini ou n'est pas un nombre valide.")
     sys.exit(1)
 
-# FIREBASE_KEY_JSON
-firebase_key_json_str = os.getenv("FIREBASE_KEY_JSON")
-if not firebase_key_json_str:
-    print("[CRITICAL ERROR] FIREBASE_KEY_JSON n'est pas défini. Impossible d'initialiser Firebase.")
+# FIREBASE_KEY_JSON_BASE64 (NOUVEAU NOM DE SECRET pour la clé encodée en Base64)
+firebase_key_json_base64_str = os.getenv("FIREBASE_KEY_JSON_BASE64")
+if not firebase_key_json_base64_str:
+    print("[CRITICAL ERROR] FIREBASE_KEY_JSON_BASE64 n'est pas défini. Impossible d'initialiser Firebase.")
     sys.exit(1)
 
 try:
-    firebase_key = json.loads(firebase_key_json_str)
+    # Décoder la chaîne Base64 en bytes, puis en string UTF-8, puis parser le JSON
+    decoded_json_bytes = base64.b64decode(firebase_key_json_base64_str)
+    decoded_json_str = decoded_json_bytes.decode('utf-8')
+    firebase_key = json.loads(decoded_json_str)
     print("[DEBUG] Clé Firebase chargée pour le projet :", firebase_key.get("project_id"))
-except json.JSONDecodeError as e:
-    print(f"[CRITICAL ERROR] Erreur de décodage JSON pour FIREBASE_KEY_JSON: {e}")
+except (base64.binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
+    print(f"[CRITICAL ERROR] Erreur de décodage (Base64 ou JSON) pour FIREBASE_KEY_JSON_BASE64: {e}")
     # Affiche le début de la chaîne pour aider au débogage, évite d'afficher toute la clé
-    print(f"La valeur de FIREBASE_KEY_JSON (début): {firebase_key_json_str[:100]}...")
+    print(f"La valeur de FIREBASE_KEY_JSON_BASE64 (début): {firebase_key_json_base64_str[:100]}...")
     sys.exit(1)
 except Exception as e:
     print(f"[CRITICAL ERROR] Erreur inattendue lors du chargement de la clé Firebase: {e}")
@@ -211,7 +215,7 @@ async def check_streams():
     print("[DEBUG] Exécution de check_streams")
     guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("[ERROR] Guilde introuvable (ID: {GUILD_ID}). Assurez-vous que le bot est sur le serveur et que GUILD_ID est correct.")
+        print(f"[ERROR] Guilde introuvable (ID: {GUILD_ID}). Assurez-vous que le bot est sur le serveur et que GUILD_ID est correct.")
         return
 
     stream_role = guild.get_role(ROLE_STREAM_ID)
