@@ -7,6 +7,8 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+print("[DEBUG] Démarrage du script bot.py")
+
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
@@ -23,11 +25,13 @@ TARGET_GAME = "Star Citizen"
 EXCLUDED_ROLE_IDS = [1363632614556041417]
 
 firebase_key = json.loads(os.getenv("FIREBASE_KEY_JSON"))
+print("[DEBUG] Clé Firebase chargée pour le projet :", firebase_key.get("project_id"))
 cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+print("[DEBUG] Instance du bot créée")
 
 def is_excluded(member):
     return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
@@ -54,6 +58,7 @@ def get_nick(user_id):
 
 @bot.event
 async def on_ready():
+    print("[DEBUG] Événement on_ready déclenché")
     print(f"Connecté en tant que {bot.user}")
     await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
@@ -110,6 +115,7 @@ async def is_streaming_on_twitch(username):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
                 data = await resp.json()
+                print(f"[DEBUG] Twitch API response for {username}: {data}")
                 if data.get("data") and isinstance(data["data"], list):
                     stream = data["data"][0]
                     if stream.get("game_name", "").lower() == TARGET_GAME.lower():
@@ -121,8 +127,10 @@ async def is_streaming_on_twitch(username):
 
 @tasks.loop(minutes=2)
 async def check_streams():
+    print("[DEBUG] Exécution de check_streams")
     guild = bot.get_guild(GUILD_ID)
     if not guild:
+        print("[ERROR] Guilde introuvable")
         return
 
     stream_role = guild.get_role(ROLE_STREAM_ID)
