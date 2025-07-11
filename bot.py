@@ -6,20 +6,19 @@ import aiohttp
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
-import sys # Import pour exit(1)
-import base64 # NOUVEL IMPORT NÉCESSAIRE pour le décodage Base64
+import sys
+import base64
 
 print("[DEBUG] Démarrage du script bot.py")
 
 # --- CHARGEMENT ET VÉRIFICATION DES VARIABLES D'ENVIRONNEMENT ---
-# Chaque variable est vérifiée pour s'assurer qu'elle existe et est au bon format.
-# Si une erreur est détectée, un message d'erreur critique est imprimé et le script s'arrête.
+# ... (Vos vérifications de variables d'environnement restent inchangées ici) ...
 
 # DISCORD_TOKEN
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     print("[CRITICAL ERROR] DISCORD_TOKEN n'est pas défini. Le bot ne peut pas se connecter.")
-    sys.exit(1) # Arrête le script avec une erreur
+    sys.exit(1)
 
 # DISCORD_GUILD_ID
 try:
@@ -34,7 +33,6 @@ if not TWITCH_CLIENT_ID:
     print("[CRITICAL ERROR] TWITCH_CLIENT_ID n'est pas défini.")
     sys.exit(1)
 
-# TWITCH_SECRET
 TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 if not TWITCH_SECRET:
     print("[CRITICAL ERROR] TWITCH_SECRET n'est pas défini.")
@@ -54,21 +52,19 @@ except (TypeError, ValueError):
     print("[CRITICAL ERROR] ROLE_GAME_ID n'est pas défini ou n'est pas un nombre valide.")
     sys.exit(1)
 
-# FIREBASE_KEY_JSON_BASE64 (NOUVEAU NOM DE SECRET pour la clé encodée en Base64)
+# FIREBASE_KEY_JSON_BASE64
 firebase_key_json_base64_str = os.getenv("FIREBASE_KEY_JSON_BASE64")
 if not firebase_key_json_base64_str:
     print("[CRITICAL ERROR] FIREBASE_KEY_JSON_BASE64 n'est pas défini. Impossible d'initialiser Firebase.")
     sys.exit(1)
 
 try:
-    # Décoder la chaîne Base64 en bytes, puis en string UTF-8, puis parser le JSON
     decoded_json_bytes = base64.b64decode(firebase_key_json_base64_str)
     decoded_json_str = decoded_json_bytes.decode('utf-8')
     firebase_key = json.loads(decoded_json_str)
     print("[DEBUG] Clé Firebase chargée pour le projet :", firebase_key.get("project_id"))
 except (base64.binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as e:
     print(f"[CRITICAL ERROR] Erreur de décodage (Base64 ou JSON) pour FIREBASE_KEY_JSON_BASE64: {e}")
-    # Affiche le début de la chaîne pour aider au débogage, évite d'afficher toute la clé
     print(f"La valeur de FIREBASE_KEY_JSON_BASE64 (début): {firebase_key_json_base64_str[:100]}...")
     sys.exit(1)
 except Exception as e:
@@ -89,19 +85,19 @@ except Exception as e:
 # --- DÉBUT DU CODE DU BOT ---
 
 TARGET_GAME = "Star Citizen"
-EXCLUDED_ROLE_IDS = [1363632614556041417] # Assurez-vous que cet ID est correct
+EXCLUDED_ROLE_IDS = [1363632614556041417]
 
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 intents.guilds = True
-intents.message_content = False # Généralement False pour les bots slash commands uniquement
+intents.message_content = False
 
-bot = commands.Bot(command_prefix="!", intents=intents) # Prefix est nécessaire même avec slash commands
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 print("[DEBUG] Instance du bot créée")
 
-# Fonctions Firebase (assurez-vous qu'elles fonctionnent avec votre structure de données)
+# Fonctions Firebase
 def is_excluded(member):
     return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
 
@@ -138,33 +134,36 @@ async def on_ready():
         print(f"[ERROR] Erreur de synchronisation des commandes : {e}")
     check_streams.start()
 
-# Commandes Slash
+# Commandes Slash (MODIFIÉES AVEC DEFER ET FOLLOWUP.SEND)
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
 async def link(interaction: discord.Interaction, twitch: str):
+    await interaction.response.defer(ephemeral=True) # <-- AJOUTÉ : Acquitte l'interaction immédiatement
     save_link(interaction.user.id, twitch)
     live = await is_streaming_on_twitch(twitch)
-    await interaction.response.send_message(
+    await interaction.followup.send( # <-- MODIFIÉ : Utilise followup.send
         f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
     )
 
 @bot.tree.command(name="unlink", description="Supprimer le lien Twitch", guild=discord.Object(id=GUILD_ID))
 async def unlink(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True) # <-- AJOUTÉ
     delete_link(interaction.user.id)
-    await interaction.response.send_message("Lien supprimé.", ephemeral=True)
+    await interaction.followup.send("Lien supprimé.", ephemeral=True) # <-- MODIFIÉ
 
 @bot.tree.command(name="statut", description="Afficher le statut Twitch", guild=discord.Object(id=GUILD_ID))
 async def statut(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True) # <-- AJOUTÉ
     twitch = get_link(interaction.user.id)
     if not twitch:
-        await interaction.response.send_message("Aucun pseudo Twitch lié.", ephemeral=True)
+        await interaction.followup.send("Aucun pseudo Twitch lié.", ephemeral=True) # <-- MODIFIÉ
     else:
         live = await is_streaming_on_twitch(twitch)
-        await interaction.response.send_message(
+        await interaction.followup.send( # <-- MODIFIÉ
             f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True
         )
 
-# Fonctions Twitch API
+# Fonctions Twitch API (inchangées, mais les erreurs sont gérées plus haut)
 async def get_twitch_token():
     url = "https://id.twitch.tv/oauth2/token"
     params = {
@@ -196,15 +195,14 @@ async def is_streaming_on_twitch(username):
                     print(f"[ERROR] Erreur HTTP lors de la requête Twitch: {resp.status} - {data}")
                     return "❌ Erreur API"
                 if data.get("data") and isinstance(data["data"], list):
-                    # Vérifiez si la liste 'data' n'est pas vide
                     if data["data"]:
                         stream = data["data"][0]
                         if stream.get("game_name", "").lower() == TARGET_GAME.lower():
                             return "🔴 En live"
-                    return "⚫ Hors ligne" # Si 'data' est vide, l'utilisateur n'est pas en live
+                    return "⚫ Hors ligne"
                 else:
                     print(f"[WARNING] Réponse inattendue de l'API Twitch: {data}")
-                    return "❌ Erreur" # Ou un autre statut d'erreur si la structure de la réponse est mauvaise
+                    return "❌ Erreur"
     except Exception as e:
         print(f"[ERROR] Échec de la vérification Twitch: {e}")
         return "❌ Erreur"
@@ -221,18 +219,17 @@ async def check_streams():
     stream_role = guild.get_role(ROLE_STREAM_ID)
     if not stream_role:
         print(f"[ERROR] Rôle Stream introuvable (ID: {ROLE_STREAM_ID}).")
-        # Ne pas retourner ici si le rôle est juste manquant, le reste de la logique peut toujours être utile.
 
     try:
         users_ref = db.collection("twitch_links").stream()
     except Exception as e:
         print(f"[ERROR] Impossible de récupérer les liens Twitch de Firestore: {e}")
-        return # Si Firestore ne fonctionne pas, cette boucle ne peut pas continuer
+        return
 
     for doc in users_ref:
         user_id = int(doc.id)
         twitch_name = doc.to_dict().get("twitch")
-        member = guild.get_member(user_id) # get_member peut renvoyer None si l'utilisateur n'est plus sur le serveur
+        member = guild.get_member(user_id)
 
         if not member:
             print(f"[DEBUG] Membre Discord {user_id} introuvable pour le lien Twitch {twitch_name}. Lien ignoré.")
@@ -264,7 +261,7 @@ async def check_streams():
                     print(f"[ERROR] Permissions insuffisantes pour modifier le pseudo de {member.display_name}")
                 except Exception as e:
                     print(f"[ERROR] Erreur lors de la modification du pseudo de {member.display_name}: {e}")
-        else: # Hors ligne ou Erreur
+        else:
             if stream_role and stream_role in member.roles:
                 try:
                     await member.remove_roles(stream_role)
@@ -275,7 +272,7 @@ async def check_streams():
                     print(f"[ERROR] Erreur lors de la suppression du rôle Stream de {member.display_name}: {e}")
             
             nick = get_nick(member.id)
-            if nick: # Si un pseudo original a été enregistré (donc il y avait un 🔴)
+            if nick:
                 try:
                     await member.edit(nick=nick)
                     print(f"[INFO] Pseudo de {member.display_name} restauré à {nick}")
@@ -283,7 +280,7 @@ async def check_streams():
                     print(f"[ERROR] Permissions insuffisantes pour restaurer le pseudo de {member.display_name}")
                 except Exception as e:
                     print(f"[ERROR] Erreur lors de la restauration du pseudo de {member.display_name}: {e}")
-                delete_nick(member.id) # Supprime le pseudo enregistré après restauration
+                delete_nick(member.id)
 
 # Démarrage du bot
 print("[DEBUG] Bot is starting...")
