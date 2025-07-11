@@ -1,8 +1,11 @@
+# ✅ bot.py minimal et fonctionnel avec Firebase + Fly.io + Discord
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import os
 import aiohttp
+import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -12,6 +15,7 @@ intents.members = True
 intents.guilds = True
 intents.message_content = False
 
+# 🔐 Env vars obligatoires
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
@@ -19,10 +23,9 @@ TWITCH_SECRET = os.getenv("TWITCH_SECRET")
 ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
 ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
 TARGET_GAME = "Star Citizen"
-EXCLUDED_ROLE_IDS = [1363632614556041417]  # Exclusion
+EXCLUDED_ROLE_IDS = [1363632614556041417]
 
-# Init Firebase
-import json
+# ✅ Firebase via variable d'environnement JSON
 firebase_key = json.loads(os.getenv("FIREBASE_KEY_JSON"))
 cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred)
@@ -64,27 +67,6 @@ async def on_ready():
         print(f"Erreur de synchronisation : {e}")
     check_streams.start()
 
-@bot.event
-async def on_presence_update(before, after):
-    if not after.guild:
-        return
-
-    member = after.guild.get_member(after.id)
-    if not member:
-        return
-
-    game_role = after.guild.get_role(ROLE_GAME_ID)
-    playing_star_citizen = any(
-        a.type == discord.ActivityType.playing and a.name and TARGET_GAME.lower() in a.name.lower()
-        for a in after.activities
-    )
-
-    if game_role:
-        if playing_star_citizen:
-            await member.add_roles(game_role)
-        else:
-            await member.remove_roles(game_role)
-
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
 async def link(interaction: discord.Interaction, twitch: str):
@@ -123,19 +105,23 @@ async def get_twitch_token():
             return data["access_token"]
 
 async def is_streaming_on_twitch(username):
-    token = await get_twitch_token()
-    headers = {
-        "Client-ID": TWITCH_CLIENT_ID,
-        "Authorization": f"Bearer {token}"
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
-            data = await resp.json()
-            if data.get("data") and isinstance(data["data"], list):
-                stream = data["data"][0]
-                if stream.get("game_name", "").lower() == TARGET_GAME.lower():
-                    return "🔴 En live"
-            return "⚫ Hors ligne"
+    try:
+        token = await get_twitch_token()
+        headers = {
+            "Client-ID": TWITCH_CLIENT_ID,
+            "Authorization": f"Bearer {token}"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
+                data = await resp.json()
+                if data.get("data") and isinstance(data["data"], list):
+                    stream = data["data"][0]
+                    if stream.get("game_name", "").lower() == TARGET_GAME.lower():
+                        return "🔴 En live"
+                return "⚫ Hors ligne"
+    except Exception as e:
+        print(f"[ERROR] Twitch check failed: {e}")
+        return "❌ Erreur"
 
 @tasks.loop(minutes=2)
 async def check_streams():
@@ -176,4 +162,5 @@ async def check_streams():
                     pass
                 delete_nick(member.id)
 
+print("[DEBUG] Bot is starting...")
 bot.run(TOKEN)
