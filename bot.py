@@ -1,5 +1,3 @@
-# ✅ bot.py minimal et fonctionnel avec Firebase + Fly.io + Discord
-
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -15,7 +13,6 @@ intents.members = True
 intents.guilds = True
 intents.message_content = False
 
-# 🔐 Env vars obligatoires
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
@@ -25,7 +22,6 @@ ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
 TARGET_GAME = "Star Citizen"
 EXCLUDED_ROLE_IDS = [1363632614556041417]
 
-# ✅ Firebase via variable d'environnement JSON
 firebase_key = json.loads(os.getenv("FIREBASE_KEY_JSON"))
 cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred)
