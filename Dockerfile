@@ -1,10 +1,15 @@
+# Utilise une image Python allégée
 FROM python:3.11-slim
 
+# Crée un dossier pour le bot
 WORKDIR /app
 
-COPY requirements.txt ./
+# Copie les fichiers nécessaires
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copie tout le reste
 COPY . .
 
+# Lance le bot
 CMD ["python", "bot.py"]
