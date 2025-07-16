@@ -11,7 +11,7 @@ import base64
 
 print("[DEBUG] Démarrage du script bot.py")
 
-# Chargement des variables d'environnement
+# --- Vérification des variables d'environnement ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
@@ -21,21 +21,21 @@ ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
 TARGET_GAME = "Star Citizen"
 EXCLUDED_ROLE_IDS = [1363632614556041417]
 
-# Clé Firebase depuis base64
 firebase_key_json_base64_str = os.getenv("FIREBASE_KEY_JSON_BASE64")
 decoded_json_bytes = base64.b64decode(firebase_key_json_base64_str)
-firebase_key = json.loads(decoded_json_bytes.decode('utf-8'))
+firebase_key = json.loads(decoded_json_bytes.decode("utf-8"))
+
 cred = credentials.Certificate(firebase_key)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
-print("[DEBUG] Firebase initialisé")
 
-# Discord bot setup
+# --- Bot Discord ---
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 intents.guilds = True
 intents.message_content = False
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def is_excluded(member):
@@ -63,13 +63,13 @@ def get_nick(user_id):
 
 @bot.event
 async def on_ready():
-    print("[DEBUG] Bot connecté en tant que", bot.user)
+    print(f"Connecté en tant que {bot.user}")
     await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"[DEBUG] Commandes synchronisées : {[cmd.name for cmd in synced]}")
+        print(f"Commandes synchronisées : {[cmd.name for cmd in synced]}")
     except Exception as e:
-        print(f"[ERROR] Échec de synchronisation : {e}")
+        print(f"[ERROR] Échec de la synchronisation : {e}")
     check_streams.start()
 
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch", guild=discord.Object(id=GUILD_ID))
@@ -118,37 +118,25 @@ async def is_streaming_on_twitch(username):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
                 data = await resp.json()
-                print(f"[DEBUG] Twitch API response for {username}: {data}")
-                if data.get("data"):
+                if data.get("data") and isinstance(data["data"], list) and len(data["data"]) > 0:
                     stream = data["data"][0]
                     if stream.get("game_name", "").lower() == TARGET_GAME.lower():
                         return "🔴 En live"
                 return "⚫ Hors ligne"
     except Exception as e:
-        print(f"[ERROR] Twitch check failed: {e}")
+        print(f"[ERROR] Twitch API: {e}")
         return "❌ Erreur"
 
 @tasks.loop(minutes=2)
 async def check_streams():
-    print("[DEBUG] check_streams lancé")
     guild = bot.get_guild(GUILD_ID)
     if not guild:
-        print("[ERROR] Guild introuvable.")
         return
 
     stream_role = guild.get_role(ROLE_STREAM_ID)
     game_role = guild.get_role(ROLE_GAME_ID)
 
-    if not stream_role:
-        print(f"[ERROR] Rôle stream ({ROLE_STREAM_ID}) introuvable")
-    if not game_role:
-        print(f"[ERROR] Rôle jeu ({ROLE_GAME_ID}) introuvable")
-
-    try:
-        users_ref = db.collection("twitch_links").stream()
-    except Exception as e:
-        print(f"[ERROR] Erreur Firestore : {e}")
-        return
+    users_ref = db.collection("twitch_links").stream()
 
     for doc in users_ref:
         user_id = int(doc.id)
@@ -158,55 +146,52 @@ async def check_streams():
         if not member or is_excluded(member):
             continue
 
-        # Vérification Twitch
+        # Vérification du live Twitch
         live_status = await is_streaming_on_twitch(twitch_name)
-        print(f"[DEBUG] Statut de {twitch_name} ({member.display_name}): {live_status}")
-
         if live_status == "🔴 En live":
             if stream_role and stream_role not in member.roles:
                 try:
                     await member.add_roles(stream_role)
-                    print(f"[INFO] Rôle stream ajouté à {member.display_name}")
-                except Exception as e:
-                    print(f"[ERROR] Ajout rôle stream: {e}")
-
+                except:
+                    pass
             base_name = get_nick(member.id) or member.display_name
             if not base_name.startswith("🔴"):
                 save_nick(member.id, base_name)
                 try:
                     await member.edit(nick=f"🔴 {base_name}")
-                except Exception as e:
-                    print(f"[ERROR] Changement pseudo stream: {e}")
+                except:
+                    pass
         else:
             if stream_role and stream_role in member.roles:
                 try:
                     await member.remove_roles(stream_role)
-                    print(f"[INFO] Rôle stream retiré à {member.display_name}")
-                except Exception as e:
-                    print(f"[ERROR] Suppression rôle stream: {e}")
+                except:
+                    pass
             nick = get_nick(member.id)
             if nick:
                 try:
                     await member.edit(nick=nick)
-                except Exception as e:
-                    print(f"[ERROR] Restauration pseudo: {e}")
+                except:
+                    pass
                 delete_nick(member.id)
 
-        # Vérifie le jeu actuel
-        if member.activity and member.activity.name and member.activity.name.lower() == TARGET_GAME.lower():
+        # Vérification du jeu
+        is_playing_star_citizen = any(
+            isinstance(activity, discord.Game) and activity.name.lower() == TARGET_GAME.lower()
+            for activity in member.activities
+        )
+
+        if is_playing_star_citizen:
             if game_role and game_role not in member.roles:
                 try:
                     await member.add_roles(game_role)
-                    print(f"[INFO] Rôle 'en jeu' ajouté à {member.display_name}")
-                except Exception as e:
-                    print(f"[ERROR] Ajout rôle 'en jeu' : {e}")
+                except:
+                    pass
         else:
             if game_role and game_role in member.roles:
                 try:
                     await member.remove_roles(game_role)
-                    print(f"[INFO] Rôle 'en jeu' retiré de {member.display_name}")
-                except Exception as e:
-                    print(f"[ERROR] Suppression rôle 'en jeu' : {e}")
+                except:
+                    pass
 
-print("[DEBUG] Bot en cours de lancement...")
 bot.run(TOKEN)
