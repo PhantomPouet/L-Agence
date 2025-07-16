@@ -11,33 +11,62 @@ import base64
 
 print("[DEBUG] Démarrage du script bot.py")
 
-# --- Vérification des variables d'environnement ---
+# --- CHARGEMENT ET VÉRIFICATION DES VARIABLES D'ENVIRONNEMENT ---
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
+if not TOKEN:
+    print("[CRITICAL ERROR] DISCORD_TOKEN manquant.")
+    sys.exit(1)
+
+try:
+    GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
+except:
+    print("[CRITICAL ERROR] DISCORD_GUILD_ID invalide.")
+    sys.exit(1)
+
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_SECRET = os.getenv("TWITCH_SECRET")
-ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
-ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
+if not TWITCH_CLIENT_ID or not TWITCH_SECRET:
+    print("[CRITICAL ERROR] Identifiants Twitch manquants.")
+    sys.exit(1)
+
+try:
+    ROLE_STREAM_ID = int(os.getenv("ROLE_STREAM_ID"))
+    ROLE_GAME_ID = int(os.getenv("ROLE_GAME_ID"))
+except:
+    print("[CRITICAL ERROR] IDs de rôles invalides.")
+    sys.exit(1)
+
+firebase_key_json_base64_str = os.getenv("FIREBASE_KEY_JSON_BASE64")
+if not firebase_key_json_base64_str:
+    print("[CRITICAL ERROR] Clé Firebase manquante.")
+    sys.exit(1)
+
+try:
+    decoded_json = base64.b64decode(firebase_key_json_base64_str).decode("utf-8")
+    firebase_key = json.loads(decoded_json)
+    print(f"[DEBUG] Clé Firebase chargée pour {firebase_key['project_id']}")
+except Exception as e:
+    print(f"[CRITICAL ERROR] Erreur de décodage de la clé Firebase : {e}")
+    sys.exit(1)
+
+try:
+    cred = credentials.Certificate(firebase_key)
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("[DEBUG] Firebase initialisé")
+except Exception as e:
+    print(f"[CRITICAL ERROR] Erreur Firebase : {e}")
+    sys.exit(1)
+
 TARGET_GAME = "Star Citizen"
 EXCLUDED_ROLE_IDS = [1363632614556041417]
 
-firebase_key_json_base64_str = os.getenv("FIREBASE_KEY_JSON_BASE64")
-decoded_json_bytes = base64.b64decode(firebase_key_json_base64_str)
-firebase_key = json.loads(decoded_json_bytes.decode("utf-8"))
-
-cred = credentials.Certificate(firebase_key)
-firebase_admin.initialize_app(cred)
-db = firestore.client()
-
-# --- Bot Discord ---
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
-intents.guilds = True
-intents.message_content = False
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# --- FONCTIONS FIREBASE ---
 def is_excluded(member):
     return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
 
@@ -61,17 +90,19 @@ def get_nick(user_id):
     doc = db.collection("nicknames").document(str(user_id)).get()
     return doc.to_dict()["nick"] if doc.exists else None
 
+# --- ÉVÉNEMENTS ---
 @bot.event
 async def on_ready():
-    print(f"Connecté en tant que {bot.user}")
+    print(f"[DEBUG] Bot connecté en tant que {bot.user}")
     await bot.change_presence(activity=discord.CustomActivity(name="/link"))
     try:
         synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"Commandes synchronisées : {[cmd.name for cmd in synced]}")
+        print(f"[DEBUG] Commandes synchronisées : {[cmd.name for cmd in synced]}")
     except Exception as e:
-        print(f"[ERROR] Échec de la synchronisation : {e}")
+        print(f"[ERROR] Erreur sync : {e}")
     check_streams.start()
 
+# --- COMMANDES SLASH ---
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
 async def link(interaction: discord.Interaction, twitch: str):
@@ -96,6 +127,7 @@ async def statut(interaction: discord.Interaction):
         live = await is_streaming_on_twitch(twitch)
         await interaction.followup.send(f"Twitch lié : `{twitch}`\nStatut : {live}", ephemeral=True)
 
+# --- TWITCH ---
 async def get_twitch_token():
     url = "https://id.twitch.tv/oauth2/token"
     params = {
@@ -106,7 +138,7 @@ async def get_twitch_token():
     async with aiohttp.ClientSession() as session:
         async with session.post(url, params=params) as resp:
             data = await resp.json()
-            return data.get("access_token")
+            return data["access_token"]
 
 async def is_streaming_on_twitch(username):
     try:
@@ -118,26 +150,28 @@ async def is_streaming_on_twitch(username):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"https://api.twitch.tv/helix/streams?user_login={username}", headers=headers) as resp:
                 data = await resp.json()
-                if data.get("data") and isinstance(data["data"], list) and len(data["data"]) > 0:
+                if data.get("data") and isinstance(data["data"], list):
                     stream = data["data"][0]
                     if stream.get("game_name", "").lower() == TARGET_GAME.lower():
                         return "🔴 En live"
                 return "⚫ Hors ligne"
     except Exception as e:
-        print(f"[ERROR] Twitch API: {e}")
+        print(f"[ERROR] Twitch check failed: {e}")
         return "❌ Erreur"
 
+# --- VÉRIFICATION DES STREAMS ET JEUX ---
 @tasks.loop(minutes=2)
 async def check_streams():
+    print("[DEBUG] check_streams lancé")
     guild = bot.get_guild(GUILD_ID)
     if not guild:
+        print("[ERROR] Guilde introuvable.")
         return
 
     stream_role = guild.get_role(ROLE_STREAM_ID)
     game_role = guild.get_role(ROLE_GAME_ID)
 
     users_ref = db.collection("twitch_links").stream()
-
     for doc in users_ref:
         user_id = int(doc.id)
         twitch_name = doc.to_dict().get("twitch")
@@ -146,52 +180,42 @@ async def check_streams():
         if not member or is_excluded(member):
             continue
 
-        # Vérification du live Twitch
+        # Rôle "en stream"
         live_status = await is_streaming_on_twitch(twitch_name)
         if live_status == "🔴 En live":
             if stream_role and stream_role not in member.roles:
-                try:
-                    await member.add_roles(stream_role)
-                except:
-                    pass
+                await member.add_roles(stream_role)
             base_name = get_nick(member.id) or member.display_name
             if not base_name.startswith("🔴"):
                 save_nick(member.id, base_name)
                 try:
                     await member.edit(nick=f"🔴 {base_name}")
-                except:
+                except discord.Forbidden:
                     pass
         else:
             if stream_role and stream_role in member.roles:
-                try:
-                    await member.remove_roles(stream_role)
-                except:
-                    pass
+                await member.remove_roles(stream_role)
             nick = get_nick(member.id)
             if nick:
                 try:
                     await member.edit(nick=nick)
-                except:
+                except discord.Forbidden:
                     pass
                 delete_nick(member.id)
 
-        # Vérification du jeu
-        is_playing_star_citizen = any(
-            isinstance(activity, discord.Game) and activity.name.lower() == TARGET_GAME.lower()
-            for activity in member.activities
-        )
+        # Rôle "en jeu"
+        playing_star_citizen = False
+        for activity in member.activities:
+            if isinstance(activity, discord.Game) and activity.name.lower() == TARGET_GAME.lower():
+                playing_star_citizen = True
+                break
 
-        if is_playing_star_citizen:
+        if playing_star_citizen:
             if game_role and game_role not in member.roles:
-                try:
-                    await member.add_roles(game_role)
-                except:
-                    pass
+                await member.add_roles(game_role)
         else:
             if game_role and game_role in member.roles:
-                try:
-                    await member.remove_roles(game_role)
-                except:
-                    pass
+                await member.remove_roles(game_role)
 
+print("[DEBUG] Bot en cours de lancement...")
 bot.run(TOKEN)
