@@ -316,9 +316,9 @@ async def check_streams():
             is_playing_game = False
             if member.activities: # S'assure qu'il y a des activités à vérifier
                 for act in member.activities:
-                    # Vérifie si c'est une activité de type "Jeu" (Playing)
+                    # MODIFIÉ : Vérifie si l'activité est de type 'Playing' (discord.ActivityType.playing)
                     # et si le nom du jeu correspond à TARGET_GAME (insensible à la casse)
-                    if isinstance(act, discord.Game) and act.name and act.name.lower() == TARGET_GAME.lower():
+                    if isinstance(act, discord.Activity) and act.type == discord.ActivityType.playing and act.name and act.name.lower() == TARGET_GAME.lower():
                         is_playing_game = True
                         break # Sort de la boucle dès que le jeu cible est trouvé
 
