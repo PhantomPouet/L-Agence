@@ -24,6 +24,7 @@ if not all([TOKEN, GUILD_ID, TWITCH_CLIENT_ID, TWITCH_SECRET, ROLE_STREAM_ID, RO
     print("[CRITICAL ERROR] Une ou plusieurs variables d'environnement sont manquantes.")
     sys.exit(1)
 
+# --- Initialisation Firebase ---
 try:
     firebase_key = json.loads(base64.b64decode(firebase_key_base64).decode("utf-8"))
     cred = credentials.Certificate(firebase_key)
@@ -33,17 +34,15 @@ except Exception as e:
     print(f"[CRITICAL ERROR] Erreur lors de l'initialisation de Firebase: {e}")
     sys.exit(1)
 
+# --- Intents Discord ---
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TARGET_GAME = "Star Citizen"
-EXCLUDED_ROLE_IDS = [1363632614556041417]
 
-def is_excluded(member):
-    return any(role.id in EXCLUDED_ROLE_IDS for role in member.roles)
-
+# --- Fonctions Firebase ---
 def save_link(user_id, twitch):
     db.collection("twitch_links").document(str(user_id)).set({"twitch": twitch})
 
@@ -64,6 +63,7 @@ def get_nick(user_id):
     doc = db.collection("nicknames").document(str(user_id)).get()
     return doc.to_dict()["nick"] if doc.exists else None
 
+# --- Twitch ---
 async def get_twitch_token():
     url = "https://id.twitch.tv/oauth2/token"
     params = {
@@ -95,6 +95,7 @@ async def is_streaming_on_twitch(username):
     except:
         return "❌ Erreur"
 
+# --- Discord events ---
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user}")
@@ -102,6 +103,7 @@ async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     check_streams.start()
 
+# --- Commands ---
 @bot.tree.command(name="link", description="Lier ton pseudo Twitch", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(twitch="Ton pseudo Twitch")
 async def link(interaction: discord.Interaction, twitch: str):
@@ -126,6 +128,7 @@ async def statut(interaction: discord.Interaction):
         live = await is_streaming_on_twitch(twitch)
         await interaction.followup.send(f"Twitch : `{twitch}`\nStatut : {live}", ephemeral=True)
 
+# --- Background task ---
 @tasks.loop(minutes=2)
 async def check_streams():
     guild = bot.get_guild(GUILD_ID)
@@ -134,23 +137,26 @@ async def check_streams():
     stream_role = guild.get_role(ROLE_STREAM_ID)
     game_role = guild.get_role(ROLE_GAME_ID)
 
+    # Récupère les utilisateurs ayant lié Twitch
     links = {doc.id: doc.to_dict()["twitch"] for doc in db.collection("twitch_links").stream()}
 
     for member in guild.members:
-        if member.bot or is_excluded(member):
+        if member.bot:
             continue
 
-        # --- Rôle "En stream" et pseudo
+        # --- Gestion Twitch uniquement si le membre a lié son Twitch ---
         if str(member.id) in links:
             twitch_name = links[str(member.id)]
             status = await is_streaming_on_twitch(twitch_name)
 
+            # Rôle "En stream"
             if stream_role:
                 if status == "🔴 En live" and stream_role not in member.roles:
                     await member.add_roles(stream_role)
                 elif status != "🔴 En live" and stream_role in member.roles:
                     await member.remove_roles(stream_role)
 
+            # Pseudo modifié
             base_name = get_nick(member.id) or member.display_name
             if status == "🔴 En live" and not base_name.startswith("🔴"):
                 save_nick(member.id, base_name)
@@ -165,7 +171,7 @@ async def check_streams():
                 except:
                     pass
 
-        # --- Rôle "En jeu"
+        # --- Gestion rôle "En jeu" pour TOUS les membres ---
         is_playing_game = any(
             act.type == discord.ActivityType.playing and act.name and act.name.lower() == TARGET_GAME.lower()
             for act in member.activities
@@ -177,4 +183,5 @@ async def check_streams():
             elif not is_playing_game and game_role in member.roles:
                 await member.remove_roles(game_role)
 
+# --- Run bot ---
 bot.run(TOKEN)
